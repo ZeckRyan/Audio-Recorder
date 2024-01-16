@@ -1,0 +1,311 @@
+import os
+import wave
+import time
+import tkinter as tk
+import pyaudio
+import threading
+import tkinter.messagebox as messagebox
+import mysql.connector
+import simpleaudio
+from tkinter import PhotoImage
+
+
+db = mysql.connector.connect(
+    host="localhost",
+    user="root",
+    password="",
+    database="db_audiorecorder"
+)
+
+def save_audio_to_file(frames, file_path):
+    sound_file = wave.open(file_path, "wb")
+    sound_file.setnchannels(1)
+    sound_file.setsampwidth(2)  # 16-bit audio
+    sound_file.setframerate(44100)
+    sound_file.writeframes(b"".join(frames))
+    sound_file.close()
+
+class Page(tk.Tk):
+    def __init__(self, title, *args):
+        super().__init__(*args)
+        self.title(title)
+        self.configure(bg="#ffcae5")
+        self.db = None  # Initialize db to None; it will be set in subclasses
+
+class HomePage(Page):
+    def __init__(self, db):
+        super().__init__("Voice Recorder App")
+
+        logo_image = PhotoImage(file="download.png")
+        logo_label = tk.Label(self, image=logo_image, bg="#ffcae5")
+        logo_label.image = logo_image
+        logo_label.pack(pady=10)
+
+        welcome_label = tk.Label(self, text="Welcome to Voice Recorder App", font=("Arial", 18), bg="#ffcae5")
+        welcome_label.pack(pady=10)
+
+        self.register_button = tk.Button(
+            self, text="Register", command=self.open_register, bg="#4CAF50", fg="white", font=("Arial", 12)
+        )
+        self.register_button.pack(pady=10)
+
+        self.login_button = tk.Button(
+            self, text="Login", command=self.open_login, bg="#3498db", fg="white", font=("Arial", 12)
+        )
+        self.login_button.pack(pady=10)
+
+        group_label = tk.Label(self, text="UAS PROJECT by Group of Class G", font=("Arial", 10), bg="#ffcae5")
+        group_label.pack(pady=10)
+
+    def open_register(self):
+        self.destroy()
+        RegisterPage(self, db)
+
+    def open_login(self):
+        self.destroy()
+        LoginPage(self, db)
+
+class RegisterPage(Page):
+    def __init__(self, parent, db):
+        super().__init__("Register")
+        self.db = db  # Save the database connection
+
+        self.username_label = tk.Label(self, text="Username:", bg="#ffcae5")
+        self.username_label.pack(pady=10)
+        self.username_entry = tk.Entry(self)
+        self.username_entry.pack(pady=10)
+
+        self.password_label = tk.Label(self, text="Password:", bg="#ffcae5")
+        self.password_label.pack(pady=10)
+        self.password_entry = tk.Entry(self, show="*")
+        self.password_entry.pack(pady=10)
+
+        self.confirm_password_label = tk.Label(self, text="Confirm Password:", bg="#ffcae5")
+        self.confirm_password_label.pack(pady=10)
+        self.confirm_password_entry = tk.Entry(self, show="*")
+        self.confirm_password_entry.pack(pady=10)
+
+        self.birthdate_label = tk.Label(self, text="Birthdate:", bg="#ffcae5")
+        self.birthdate_label.pack(pady=10)
+        self.birthdate_entry = tk.Entry(self)
+        self.birthdate_entry.pack(pady=10)
+
+        self.register_button = tk.Button(
+            self, text="Register", command=self.register, bg="#4CAF50", fg="white", font=("Arial", 12)
+        )
+        self.register_button.pack(pady=20)
+
+    def register(self):
+        username = self.username_entry.get()
+        birthdate = self.birthdate_entry.get()
+        password = self.password_entry.get()
+        confirm_password = self.confirm_password_entry.get()
+
+        if password != confirm_password:
+            messagebox.showwarning("Password Mismatch", "Password and Confirm Password do not match.")
+        else:
+            cursor = self.db.cursor()
+            sql = "INSERT INTO login (username, password) VALUES (%s, %s)"
+            val = (username, password)
+            cursor.execute(sql, val)
+            self.db.commit()
+            self.destroy()
+            VoiceRecorderPage(self, username, password, self.db)
+
+class LoginPage(Page):
+    def __init__(self, parent, db):
+        super().__init__("Login")
+        self.db = db  # Initialize db attribute
+
+        self.username_label = tk.Label(self, text="Username:", bg="#ffcae5")
+        self.username_label.pack(pady=10)
+        self.username_entry = tk.Entry(self)
+        self.username_entry.pack(pady=10)
+
+        self.password_label = tk.Label(self, text="Password:", bg="#ffcae5")
+        self.password_label.pack(pady=10)
+        self.password_entry = tk.Entry(self, show="*")
+        self.password_entry.pack(pady=10)
+
+        self.login_button = tk.Button(
+            self, text="Login", command=self.login, bg="#3498db", fg="white", font=("Arial", 12)
+        )
+        self.login_button.pack(pady=20)
+
+    def login(self):
+        username = self.username_entry.get()
+        password = self.password_entry.get()
+        cursor = self.db.cursor()
+        sql = "SELECT * FROM login WHERE username=%s AND password=%s"
+        val = (username, password,)
+        cursor.execute(sql, val)
+        result = cursor.fetchall()
+
+        if result:
+            self.destroy()
+            VoiceRecorderPage(self, username, password, self.db)
+        else:
+            messagebox.showwarning("User Not Found", "Username not found. Please register.")
+
+class VoiceRecorder:
+    def __init__(self, parent, login_page, username, password, db):
+        self.label_update_interval = 1000
+        self.parent = parent
+        self.login_page = login_page
+        self.username = username
+        self.password = password
+        self.db = db
+        self.recording = False
+        self.frames = []
+        self.start_time = 0
+
+        self.button = tk.Button(parent, text="🎤", font=("Arial", 120, "bold"), command=self.toggle_recording)
+        self.button.pack()
+        self.label = tk.Label(parent, text="00:00:00")
+        self.label.pack()
+
+    def click_handler(self):
+        if self.recording:
+            self.recording = False
+            self.button.config(fg="black")
+            self.save_audio()
+        else:
+            self.recording = True
+            self.button.config(fg="red")
+            self.start_time = time.time()
+            self.record()
+
+    def toggle_recording(self):
+        if self.recording:
+            self.stop_recording()
+        else:
+            self.start_recording()
+
+    def start_recording(self):
+        self.recording = True
+        self.button.config(fg="red")
+        self.start_time = time.time()
+        self.frames = []  # Reset frames
+        threading.Thread(target=self.record).start()
+
+    def stop_recording(self):
+        self.recording = False
+        self.button.config(fg="black")
+        self.save_audio()
+
+    def record(self):
+        audio = pyaudio.PyAudio()
+        stream = audio.open(format=pyaudio.paInt16, channels=2, rate=44100, input=True, frames_per_buffer=4096)
+
+        try:
+            while self.recording:
+                data = stream.read(4096)
+                self.frames.append(data)
+
+                passed = time.time() - self.start_time
+                secs = passed % 60
+                mins = passed // 60
+                hours = mins // 60
+
+                # Schedule the label update in the main thread
+                self.parent.after(self.label_update_interval, self.update_label, hours, mins, secs)
+        except Exception as e:
+            print(f"Error during recording: {e}")
+            self.show_error_message(f"An error occurred during recording: {e}")
+        finally:
+            stream.stop_stream()
+            stream.close()
+            audio.terminate()
+
+    def update_label(self, hours, mins, secs):
+        self.label.config(text=f"{int(hours):02d}:{int(mins):02d}:{int(secs):02d}")
+
+    def show_error_message(self, message):
+        # Use update_idletasks() to run the messagebox in the main thread
+        self.parent.update_idletasks()
+        messagebox.showerror("Recording Error", message)
+        
+    def save_audio(self):
+        exists = True
+        i = 1
+        while exists:
+            if os.path.exists(f"recording{i}.wav"):
+                i += 1
+            else:
+                exists = False
+
+        file_path = f"recording{i}.wav"
+        save_audio_to_file(self.frames, file_path)
+        save_audio_to_database(self.username, file_path, self.db)
+
+
+class VoiceRecorderPage(Page):
+    def __init__(self, parent, username, password, db):
+        super().__init__("Voice Recorder")
+        self.db = db
+        self.resizable(False, False)
+        self.voice_recorder = VoiceRecorder(self, parent, username, password, db)
+
+        self.show_history_button = tk.Button(self, text="Show Recording History", command=lambda: self.show_history(username))
+        self.show_history_button.pack(pady=10)
+
+    def show_history(self, username):
+        history = get_recording_history(username, self.db)
+        if history:
+            RecordingHistoryPopup(self, history)
+        else:
+            messagebox.showinfo("Recording History", "You have no recording history.")
+
+class RecordingHistoryPopup(tk.Toplevel):
+    def __init__(self, parent, history):
+        super().__init__(parent)
+        self.title("Recording History")
+        self.geometry("300x200")
+
+        self.history_label = tk.Label(self, text="Recording History:")
+        self.history_label.pack(pady=10)
+
+        self.history_listbox = tk.Listbox(self)
+        for recording in history:
+            self.history_listbox.insert(tk.END, recording[0])  # Add the file_path to the listbox
+        self.history_listbox.pack(pady=10)
+
+        self.play_button = tk.Button(self, text="Play Selected Recording", command=self.play_selected_recording)
+        self.play_button.pack(pady=10)
+
+        self.back_button = tk.Button(self, text="Back to Recording", command=self.destroy)
+        self.back_button.pack(pady=10)
+
+        self.selected_file_path = None  # To store the selected file path
+
+    def play_selected_recording(self):
+        selected_index = self.history_listbox.curselection()
+        if selected_index:
+            selected_file_path = self.history_listbox.get(selected_index)
+            self.selected_file_path = selected_file_path
+            play_audio(selected_file_path)
+        else:
+            messagebox.showinfo("No Selection", "Please select a recording to play.")
+
+def play_audio(file_path):
+    wave_obj = simpleaudio.WaveObject.from_wave_file(file_path)
+    play_obj = wave_obj.play()
+    play_obj.wait_done()
+
+def save_audio_to_database(username, file_path, db):
+    cursor = db.cursor()
+    sql = "INSERT INTO audio_recordings (username, file_path) VALUES (%s, %s)"
+    val = (username, file_path)
+    cursor.execute(sql, val)
+    db.commit()
+
+def get_recording_history(username, db):
+    cursor = db.cursor()
+    sql = "SELECT file_path FROM audio_recordings WHERE username = %s ORDER BY recording_time DESC"
+    val = (username,)
+    cursor.execute(sql, val)
+    result = cursor.fetchall()
+    return result
+
+if __name__ == "__main__":
+    HomePage(db).mainloop()
