@@ -1,15 +1,14 @@
-import os
-import wave
-import time
-import tkinter as tk
-import pyaudio
-import threading
-import tkinter.messagebox as messagebox
-import mysql.connector
-import simpleaudio
-from tkinter import PhotoImage
+import mysql.connector # Koneksi ke Database MySQL
+import os # Interaksi dengan sistem operasi, digunakan untuk operasi file.
+import wave # Membaca dan menulis file audio format WAV.
+import time  # Fungsi terkait waktu, digunakan untuk mengukur durasi.
+import tkinter as tk # Antarmuka Pengguna Grafis (GUI) untuk Python.
+import pyaudio # Interaksi dengan aliran audio, digunakan untuk merekam audio.
+import threading # Dukungan multi-threading untuk menjalankan proses secara bersamaan.
+import tkinter.messagebox as messagebox # Kotak pesan dalam Tkinter, untuk menampilkan peringatan
 
 
+# Koneksi ke Database
 db = mysql.connector.connect(
     host="localhost",
     user="root",
@@ -17,6 +16,7 @@ db = mysql.connector.connect(
     database="db_audiorecorder"
 )
 
+# Fungsi ini digunakan untuk menyimpan data suara yang direkam ke dalam file audio WAV
 def save_audio_to_file(frames, file_path):
     sound_file = wave.open(file_path, "wb")
     sound_file.setnchannels(1)
@@ -25,20 +25,24 @@ def save_audio_to_file(frames, file_path):
     sound_file.writeframes(b"".join(frames))
     sound_file.close()
 
+# Kelas ini merupakan kelas dasar untuk halaman dalam aplikasi.
 class Page(tk.Tk):
-    def __init__(self, title, *args):
-        super().__init__(*args)
+    def __init__(self, title):
+        super().__init__()
         self.title(title)
         self.configure(bg="#ffcae5")
         self.db = None  # Initialize db to None; it will be set in subclasses
 
+# Kelas ini mewakili halaman utama aplikasi. dan Menampilkan tombol untuk registrasi dan login.
 class HomePage(Page):
     def __init__(self, db):
         super().__init__("Voice Recorder App")
+        self.geometry("600x700")
+        self.db = db
 
-        logo_image = PhotoImage(file="download.png")
-        logo_label = tk.Label(self, image=logo_image, bg="#ffcae5")
-        logo_label.image = logo_image
+        logo_label = tk.Label(self, text="🎤", font=("Arial", 100), bg="#ffcae5")
+        logo_label.pack(pady=25)
+        logo_label = tk.Label(self, bg="#ffcae5")
         logo_label.pack(pady=10)
 
         welcome_label = tk.Label(self, text="Welcome to Voice Recorder App", font=("Arial", 18), bg="#ffcae5")
@@ -54,20 +58,22 @@ class HomePage(Page):
         )
         self.login_button.pack(pady=10)
 
-        group_label = tk.Label(self, text="UAS PROJECT by Group of Class G", font=("Arial", 10), bg="#ffcae5")
+        group_label = tk.Label(self, text="UAS PROJECT", font=("Arial", 10), bg="#ffcae5")
         group_label.pack(pady=10)
 
     def open_register(self):
         self.destroy()
-        RegisterPage(self, db)
+        RegisterPage(self, self.db)
 
     def open_login(self):
         self.destroy()
-        LoginPage(self, db)
+        LoginPage(self, self.db)
 
+# Kelas ini mewakili halaman registrasi. Memiliki fungsi untuk mendaftarkan pengguna baru ke dalam database.
 class RegisterPage(Page):
     def __init__(self, parent, db):
         super().__init__("Register")
+        self.geometry("600x700")
         self.db = db  # Save the database connection
 
         self.username_label = tk.Label(self, text="Username:", bg="#ffcae5")
@@ -85,11 +91,6 @@ class RegisterPage(Page):
         self.confirm_password_entry = tk.Entry(self, show="*")
         self.confirm_password_entry.pack(pady=10)
 
-        self.birthdate_label = tk.Label(self, text="Birthdate:", bg="#ffcae5")
-        self.birthdate_label.pack(pady=10)
-        self.birthdate_entry = tk.Entry(self)
-        self.birthdate_entry.pack(pady=10)
-
         self.register_button = tk.Button(
             self, text="Register", command=self.register, bg="#4CAF50", fg="white", font=("Arial", 12)
         )
@@ -97,7 +98,6 @@ class RegisterPage(Page):
 
     def register(self):
         username = self.username_entry.get()
-        birthdate = self.birthdate_entry.get()
         password = self.password_entry.get()
         confirm_password = self.confirm_password_entry.get()
 
@@ -106,16 +106,18 @@ class RegisterPage(Page):
         else:
             cursor = self.db.cursor()
             sql = "INSERT INTO login (username, password) VALUES (%s, %s)"
-            val = (username, password)
+            val = (username, password, )
             cursor.execute(sql, val)
             self.db.commit()
             self.destroy()
-            VoiceRecorderPage(self, username, password, self.db)
+            VoiceRecorder(self, username, password, self.db)
 
+# Kelas ini mewakili halaman login. Memiliki fungsi untuk melakukan login dengan memeriksa kecocokan username dan password dalam database.
 class LoginPage(Page):
     def __init__(self, parent, db):
         super().__init__("Login")
-        self.db = db  # Initialize db attribute
+        self.geometry("600x700")
+        self.db = db
 
         self.username_label = tk.Label(self, text="Username:", bg="#ffcae5")
         self.username_label.pack(pady=10)
@@ -143,44 +145,77 @@ class LoginPage(Page):
 
         if result:
             self.destroy()
-            VoiceRecorderPage(self, username, password, self.db)
+            VoiceRecorder(self, username, password, self.db)
         else:
             messagebox.showwarning("User Not Found", "Username not found. Please register.")
 
+# Kelas ini mewakili jendela popup yang menampilkan riwayat rekaman suara. Menampilkan daftar rekaman suara pengguna
+class RecordingHistoryPopup(tk.Toplevel):
+    def __init__(self, parent, history):
+        super().__init__(parent)
+        self.title("Recording History")
+        self.geometry("300x200")
+        self.configure(bg="#ffc0cb")
+
+        self.history_label = tk.Label(self, text="Recording History:")
+        self.history_label.pack(pady=10)
+
+        self.history_listbox = tk.Listbox(self, selectmode=tk.DISABLED)
+        for recording in history:
+            self.history_listbox.insert(tk.END, recording[0])  # Assuming recording[0] contains the file_path
+        self.history_listbox.pack(pady=10)
+
+        self.back_button = tk.Button(self, text="Back to Recording", command=self.destroy)
+        self.back_button.pack(pady=10)
+
+        self.selected_file_path = None  # To store the selected file path
+
+# Fungsi ini mengambil riwayat rekaman suara pengguna dari database.
+def get_recording_history(username, db):
+    cursor = db.cursor()
+    sql = "SELECT file_path FROM audio_recordings WHERE username = %s ORDER BY recording_time DESC"
+    val = (username,)
+    cursor.execute(sql, val)
+    result = cursor.fetchall()
+    return result
+
+# Kelas ini merupakan inti dari aplikasi perekaman suara. Menangani proses perekaman suara, penghentian rekaman, penyimpanan file audio, dan menampilkan riwayat rekaman
 class VoiceRecorder:
-    def __init__(self, parent, login_page, username, password, db):
-        self.label_update_interval = 1000
+    def __init__(self, parent, username, password, db):
+        super().__init__()
         self.parent = parent
-        self.login_page = login_page
         self.username = username
         self.password = password
         self.db = db
+        self.root = tk.Tk()
+        self.root.resizable(False, False)
+
+        # Set the background color to pink
+        self.root.configure(bg="#ffc0cb")
+        
+        self.button = tk.Button(self.root, text="🎤", font=("Arial", 120, "bold"), command=self.toggle_recording, fg="black", bg="#ffc0cb")
+        self.button.pack()
+
+        self.history_button = tk.Button(self.root, text="Recording History", command=self.show_history, bg="#3498db", fg="white")
+        self.history_button.pack()
+
+        self.label = tk.Label(self.root, text="00:00:00", fg="black")
+        self.label.pack()
+
         self.recording = False
         self.frames = []
         self.start_time = 0
 
-        self.button = tk.Button(parent, text="🎤", font=("Arial", 120, "bold"), command=self.toggle_recording)
-        self.button.pack()
-        self.label = tk.Label(parent, text="00:00:00")
-        self.label.pack()
+        self.root.mainloop()
 
-    def click_handler(self):
-        if self.recording:
-            self.recording = False
-            self.button.config(fg="black")
-            self.save_audio()
-        else:
-            self.recording = True
-            self.button.config(fg="red")
-            self.start_time = time.time()
-            self.record()
-
+    # Fungsi untuk mengganti status perekaman antara aktif dan tidak aktif.
     def toggle_recording(self):
         if self.recording:
             self.stop_recording()
         else:
             self.start_recording()
 
+    # Fungsi untuk memulai proses perekaman suara.
     def start_recording(self):
         self.recording = True
         self.button.config(fg="red")
@@ -188,18 +223,20 @@ class VoiceRecorder:
         self.frames = []  # Reset frames
         threading.Thread(target=self.record).start()
 
+    # Fungsi untuk menghentikan proses perekaman suara.
     def stop_recording(self):
         self.recording = False
         self.button.config(fg="black")
         self.save_audio()
 
+    # Fungsi yang berjalan dalam thread terpisah untuk merekam data suara.
     def record(self):
         audio = pyaudio.PyAudio()
-        stream = audio.open(format=pyaudio.paInt16, channels=2, rate=44100, input=True, frames_per_buffer=4096)
-
+        stream = audio.open(format=pyaudio.paInt16, channels=1, rate=44100,
+                            input=True, frames_per_buffer=1024)
         try:
             while self.recording:
-                data = stream.read(4096)
+                data = stream.read(1024)
                 self.frames.append(data)
 
                 passed = time.time() - self.start_time
@@ -207,8 +244,7 @@ class VoiceRecorder:
                 mins = passed // 60
                 hours = mins // 60
 
-                # Schedule the label update in the main thread
-                self.parent.after(self.label_update_interval, self.update_label, hours, mins, secs)
+                self.root.after(1000, self.update_label, hours, mins, secs)
         except Exception as e:
             print(f"Error during recording: {e}")
             self.show_error_message(f"An error occurred during recording: {e}")
@@ -217,14 +253,17 @@ class VoiceRecorder:
             stream.close()
             audio.terminate()
 
+    # Fungsi untuk memperbarui label waktu pada antarmuka pengguna.
     def update_label(self, hours, mins, secs):
         self.label.config(text=f"{int(hours):02d}:{int(mins):02d}:{int(secs):02d}")
 
+    # Fungsi untuk menampilkan pesan kesalahan dalam sebuah dialog.
     def show_error_message(self, message):
         # Use update_idletasks() to run the messagebox in the main thread
-        self.parent.update_idletasks()
-        messagebox.showerror("Recording Error", message)
-        
+        self.root.update_idletasks()
+        tk.messagebox.showerror("Recording Error", message)
+
+    # Fungsi untuk menyimpan data suara yang direkam ke dalam file audio WAV.
     def save_audio(self):
         exists = True
         i = 1
@@ -236,76 +275,14 @@ class VoiceRecorder:
 
         file_path = f"recording{i}.wav"
         save_audio_to_file(self.frames, file_path)
-        save_audio_to_database(self.username, file_path, self.db)
-
-
-class VoiceRecorderPage(Page):
-    def __init__(self, parent, username, password, db):
-        super().__init__("Voice Recorder")
-        self.db = db
-        self.resizable(False, False)
-        self.voice_recorder = VoiceRecorder(self, parent, username, password, db)
-
-        self.show_history_button = tk.Button(self, text="Show Recording History", command=lambda: self.show_history(username))
-        self.show_history_button.pack(pady=10)
-
-    def show_history(self, username):
-        history = get_recording_history(username, self.db)
+    
+    # Fungsi untuk menampilkan jendela popup riwayat rekaman suara pengguna.
+    def show_history(self):
+        history = get_recording_history(self.username, self.db)
         if history:
-            RecordingHistoryPopup(self, history)
+            RecordingHistoryPopup(self.root, history)
         else:
             messagebox.showinfo("Recording History", "You have no recording history.")
-
-class RecordingHistoryPopup(tk.Toplevel):
-    def __init__(self, parent, history):
-        super().__init__(parent)
-        self.title("Recording History")
-        self.geometry("300x200")
-
-        self.history_label = tk.Label(self, text="Recording History:")
-        self.history_label.pack(pady=10)
-
-        self.history_listbox = tk.Listbox(self)
-        for recording in history:
-            self.history_listbox.insert(tk.END, recording[0])  # Add the file_path to the listbox
-        self.history_listbox.pack(pady=10)
-
-        self.play_button = tk.Button(self, text="Play Selected Recording", command=self.play_selected_recording)
-        self.play_button.pack(pady=10)
-
-        self.back_button = tk.Button(self, text="Back to Recording", command=self.destroy)
-        self.back_button.pack(pady=10)
-
-        self.selected_file_path = None  # To store the selected file path
-
-    def play_selected_recording(self):
-        selected_index = self.history_listbox.curselection()
-        if selected_index:
-            selected_file_path = self.history_listbox.get(selected_index)
-            self.selected_file_path = selected_file_path
-            play_audio(selected_file_path)
-        else:
-            messagebox.showinfo("No Selection", "Please select a recording to play.")
-
-def play_audio(file_path):
-    wave_obj = simpleaudio.WaveObject.from_wave_file(file_path)
-    play_obj = wave_obj.play()
-    play_obj.wait_done()
-
-def save_audio_to_database(username, file_path, db):
-    cursor = db.cursor()
-    sql = "INSERT INTO audio_recordings (username, file_path) VALUES (%s, %s)"
-    val = (username, file_path)
-    cursor.execute(sql, val)
-    db.commit()
-
-def get_recording_history(username, db):
-    cursor = db.cursor()
-    sql = "SELECT file_path FROM audio_recordings WHERE username = %s ORDER BY recording_time DESC"
-    val = (username,)
-    cursor.execute(sql, val)
-    result = cursor.fetchall()
-    return result
 
 if __name__ == "__main__":
     HomePage(db).mainloop()
