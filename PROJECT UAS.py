@@ -263,7 +263,8 @@ class VoiceRecorder:
         self.root.update_idletasks()
         tk.messagebox.showerror("Recording Error", message)
 
-    # Fungsi untuk menyimpan data suara yang direkam ke dalam file audio WAV.
+
+    # Fungsi untuk menyimpan data suara yang direkam ke dalam file audio WAV dan memberi info ke database
     def save_audio(self):
         exists = True
         i = 1
@@ -275,6 +276,13 @@ class VoiceRecorder:
 
         file_path = f"recording{i}.wav"
         save_audio_to_file(self.frames, file_path)
+
+        # Menyimpan informasi rekaman ke dalam database
+        cursor = self.db.cursor()
+        sql = "INSERT INTO audio_recordings (username, file_path, recording_time) VALUES (%s, %s, NOW())"
+        val = (self.username, file_path)
+        cursor.execute(sql, val)
+        self.db.commit()
     
     # Fungsi untuk menampilkan jendela popup riwayat rekaman suara pengguna.
     def show_history(self):
